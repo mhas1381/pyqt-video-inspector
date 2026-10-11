@@ -31,7 +31,8 @@ class MainWindow(QMainWindow):
         self._video = VideoModel()
         self._current_frame: np.ndarray | None = None
         self._current_index = 0
-        self._histogram = HistogramWindow()
+        self._histogram = HistogramWindow(self)
+        self._histogram.setWindowFlags(Qt.WindowType.Window)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_play_tick)
@@ -119,6 +120,7 @@ class MainWindow(QMainWindow):
         self._on_pause()
         error = self._video.open(path)
         if error:
+            self._reset_to_empty_state()
             QMessageBox.critical(self, "Open Failed", error)
             return
 
@@ -143,8 +145,27 @@ class MainWindow(QMainWindow):
         self._set_controls_enabled(True)
         self._show_frame(0, keep_roi=False)
 
-        interval = max(1, int(round(1000.0 / meta.fps)))
+        fps = meta.fps if meta.fps > 0.0 else 25.0
+        interval = max(1, int(round(1000.0 / fps)))
         self._timer.setInterval(interval)
+
+    def _reset_to_empty_state(self) -> None:
+        self._current_frame = None
+        self._current_index = 0
+        self._resolution_label.setText("—")
+        self._fps_label.setText("—")
+        self._frame_count_label.setText("—")
+        self._frame_spin.blockSignals(True)
+        self._frame_slider.blockSignals(True)
+        self._frame_spin.setRange(0, 0)
+        self._frame_slider.setRange(0, 0)
+        self._frame_spin.setValue(0)
+        self._frame_slider.setValue(0)
+        self._frame_spin.blockSignals(False)
+        self._frame_slider.blockSignals(False)
+        self._frame_view.set_frame(None)
+        self._set_controls_enabled(False)
+        self._refresh_histogram_if_visible()
 
     def _show_frame(self, index: int, *, keep_roi: bool = True) -> None:
         frame = self._video.get_frame(index)

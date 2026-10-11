@@ -1,9 +1,30 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
-from PyQt6.QtCore import QRect, Qt
-from PyQt6.QtGui import QColor, QPainter, QPaintEvent, QPen
+from PyQt6.QtCore import QRect, QRectF, Qt
+from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPaintEvent, QPen
 from PyQt6.QtWidgets import QWidget
+
+BACKGROUND = QColor(45, 45, 45)
+PLOT_BACKGROUND = QColor(24, 24, 24)
+GRID_COLOR = QColor(64, 64, 64)
+AXIS_COLOR = QColor(190, 190, 190)
+
+CHANNELS: tuple[tuple[str, QColor], ...] = (
+    ("Red", QColor(226, 32, 32)),
+    ("Green", QColor(60, 200, 64)),
+    ("Blue", QColor(32, 112, 232)),
+)
+
+X_TICKS = (0, 50, 100, 150, 200, 255)
+Y_DIVISIONS = 4
+
+MARGIN_LEFT = 46
+MARGIN_RIGHT = 14
+MARGIN_TOP = 46
+MARGIN_BOTTOM = 30
 
 
 class HistogramWindow(QWidget):
@@ -12,17 +33,15 @@ class HistogramWindow(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Histogram")
-        self.resize(520, 360)
-        self.setMinimumSize(320, 240)
+        self.resize(430, 350)
+        self.setMinimumSize(320, 260)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
 
-        self._hist_r: np.ndarray | None = None
-        self._hist_g: np.ndarray | None = None
-        self._hist_b: np.ndarray | None = None
+        self._histograms: tuple[np.ndarray, ...] | None = None
 
     def update_from_frame(self, rgb: np.ndarray | None, roi: QRect) -> None:
         if rgb is None:
-            self._hist_r = self._hist_g = self._hist_b = None
+            self._histograms = None
             self.update()
             return
 
@@ -37,79 +56,158 @@ class HistogramWindow(QWidget):
             region = rgb[y1:y2, x1:x2]
 
         if region.size == 0:
-            self._hist_r = self._hist_g = self._hist_b = None
+            self._histograms = None
             self.update()
             return
 
         bins = np.arange(257)
-        self._hist_r, _ = np.histogram(region[:, :, 0], bins=bins)
-        self._hist_g, _ = np.histogram(region[:, :, 1], bins=bins)
-        self._hist_b, _ = np.histogram(region[:, :, 2], bins=bins)
+        self._histograms = tuple(
+            np.histogram(region[:, :, index], bins=bins)[0] for index in range(3)
+        )
         self.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(30, 30, 30))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.fillRect(self.rect(), BACKGROUND)
 
-        margin_left = 40
-        margin_right = 20
-        margin_top = 30
-        margin_bottom = 40
-        plot = QRect(
-            margin_left,
-            margin_top,
-            max(1, self.width() - margin_left - margin_right),
-            max(1, self.height() - margin_top - margin_bottom),
-        )
+        self._draw_legend(painter)
 
-        painter.setPen(QPen(QColor(180, 180, 180)))
-        painter.drawRect(plot)
-        painter.drawText(10, 20, "RGB Histogram")
+        plot = self._plot_rect()
+        painter.fillRect(plot, PLOT_BACKGROUND)
 
-        if self._hist_r is None or self._hist_g is None or self._hist_b is None:
+        if self._histograms is None:
+            painter.setPen(AXIS_COLOR)
             painter.drawText(plot, Qt.AlignmentFlag.AlignCenter, "No data")
             return
 
-        peak = max(
-            float(self._hist_r.max()),
-            float(self._hist_g.max()),
-            float(self._hist_b.max()),
-            1.0,
-        )
+        y_max = self._nice_peak(max(float(hist.max()) for hist in self._histograms))
+        self._draw_grid(painter, plot)
+        for (_, color), hist in zip(reversed(CHANNELS), reversed(self._histograms)):
+            self._draw_channel(painter, plot, hist, color, y_max)
+        self._draw_axis_labels(painter, plot, y_max)
 
-        self._draw_channel(painter, plot, self._hist_r, QColor(220, 60, 60), peak)
-        self._draw_channel(painter, plot, self._hist_g, QColor(60, 200, 80), peak)
-        self._draw_channel(painter, plot, self._hist_b, QColor(60, 120, 240), peak)
+    def _plot_rect(self) -> QRectF:
+        width = max(1, self.width() - MARGIN_LEFT - MARGIN_RIGHT)
+        height = max(1, self.height() - MARGIN_TOP - MARGIN_BOTTOM)
+        return QRectF(MARGIN_LEFT, MARGIN_TOP, width, height)
 
-        painter.setPen(QColor(180, 180, 180))
-        painter.drawText(plot.left(), self.height() - 15, "0")
-        painter.drawText(plot.right() - 24, self.height() - 15, "255")
-        painter.drawText(8, plot.bottom(), "0")
-        painter.drawText(8, plot.top() + 12, f"{int(peak)}")
+    def _draw_legend(self, painter: QPainter) -> None:
+        metrics = painter.fontMetrics()
+        swatch = 12
+        y = MARGIN_TOP - 26
+        x = MARGIN_LEFT
+
+        for name, color in CHANNELS:
+            painter.fillRect(QRect(x, y, swatch, swatch), color)
+            painter.setPen(AXIS_COLOR)
+            text_rect = QRect(
+                x + swatch + 6,
+                y - 2,
+                metrics.horizontalAdvance(name),
+                swatch + 4,
+            )
+            painter.drawText(
+                text_rect,
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                name,
+            )
+            x += swatch + 10 + metrics.horizontalAdvance(name) + 20
+
+    def _draw_grid(self, painter: QPainter, plot: QRectF) -> None:
+        pen = QPen(GRID_COLOR)
+        pen.setWidth(1)
+        painter.setPen(pen)
+
+        for step in range(Y_DIVISIONS + 1):
+            y = plot.bottom() - plot.height() * step / Y_DIVISIONS
+            painter.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
+
+        for value in X_TICKS:
+            x = plot.left() + plot.width() * value / 255.0
+            painter.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
+
+    def _draw_axis_labels(self, painter: QPainter, plot: QRectF, y_max: float) -> None:
+        painter.setPen(AXIS_COLOR)
+        font = QFont(painter.font())
+        font.setPointSize(max(7, font.pointSize() - 1))
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+
+        for step in range(Y_DIVISIONS + 1):
+            value = y_max * step / Y_DIVISIONS
+            text = f"{value:.0f}"
+            y = plot.bottom() - plot.height() * step / Y_DIVISIONS
+            painter.drawText(
+                QRectF(
+                    plot.left() - metrics.horizontalAdvance(text) - 8,
+                    y - metrics.height() / 2,
+                    metrics.horizontalAdvance(text),
+                    metrics.height(),
+                ),
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                text,
+            )
+
+        for value in X_TICKS:
+            x = plot.left() + plot.width() * value / 255.0
+            painter.drawText(
+                QRectF(x - metrics.horizontalAdvance("255") / 2, plot.bottom() + 6,
+                       metrics.horizontalAdvance("255"), metrics.height()),
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                str(value),
+            )
 
     def _draw_channel(
         self,
         painter: QPainter,
-        plot: QRect,
+        plot: QRectF,
         hist: np.ndarray,
         color: QColor,
-        peak: float,
+        y_max: float,
     ) -> None:
-        pen = QPen(color)
-        pen.setWidth(2)
-        painter.setPen(pen)
-
-        n = len(hist)
-        if n < 2:
+        count = len(hist)
+        if count < 2 or y_max <= 0.0:
             return
 
-        points = []
-        for i, value in enumerate(hist):
-            x = plot.left() + int(i * (plot.width() - 1) / (n - 1))
-            y = plot.bottom() - int((float(value) / peak) * (plot.height() - 1))
-            points.append((x, y))
+        span = plot.width()
+        height = plot.height()
+        curve = QPainterPath()
+        area = QPainterPath()
+        area.moveTo(plot.left(), plot.bottom())
 
-        for i in range(1, len(points)):
-            x0, y0 = points[i - 1]
-            x1, y1 = points[i]
-            painter.drawLine(x0, y0, x1, y1)
+        for index, value in enumerate(hist):
+            x = plot.left() + index * span / (count - 1)
+            y = plot.bottom() - min(1.0, float(value) / y_max) * height
+            if index == 0:
+                curve.moveTo(x, y)
+            else:
+                curve.lineTo(x, y)
+            area.lineTo(x, y)
+
+        area.lineTo(plot.left() + span, plot.bottom())
+        area.closeSubpath()
+
+        fill = QColor(color)
+        fill.setAlpha(120)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.fillPath(area, fill)
+
+        pen = QPen(color)
+        pen.setWidth(1)
+        painter.setPen(pen)
+        painter.drawPath(curve)
+
+    @staticmethod
+    def _nice_peak(peak: float) -> float:
+        """Round a raw peak up to a readable axis maximum."""
+        if not math.isfinite(peak) or peak <= 0.0:
+            return 1.0
+
+        exponent = math.floor(math.log10(peak))
+        scale = 10.0**exponent
+        fraction = peak / scale
+        for step in (1.0, 2.0, 2.5, 5.0, 10.0):
+            if fraction <= step:
+                return step * scale
+        return 10.0 * scale

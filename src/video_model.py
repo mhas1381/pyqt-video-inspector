@@ -1,10 +1,28 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+
+def _safe_float(value: float) -> float:
+    """Coerce a container-reported value to a finite float, else 0.0."""
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return result if math.isfinite(result) else 0.0
+
+
+def _safe_int(value: float) -> int:
+    """Coerce a container-reported value to a non-negative int, else 0."""
+    result = _safe_float(value)
+    if result < 0.0:
+        return 0
+    return int(result)
 
 
 @dataclass(frozen=True)
@@ -61,10 +79,13 @@ class VideoModel:
             cap.release()
             return f"Could not open video file:\n{path}"
 
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = float(cap.get(cv2.CAP_PROP_FPS)) or 25.0
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = _safe_int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = _safe_int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = _safe_float(cap.get(cv2.CAP_PROP_FPS))
+        frame_count = _safe_int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        if not math.isfinite(fps) or fps <= 0.0:
+            fps = 25.0
 
         if width <= 0 or height <= 0 or frame_count <= 0:
             cap.release()
@@ -89,7 +110,7 @@ class VideoModel:
 
     def get_frame(self, index: int) -> np.ndarray | None:
         """Return an RGB uint8 frame at the given index, or None on failure."""
-        if not self.is_open or self._meta is None:
+        if not self.is_open or self._meta is None or self._meta.frame_count <= 0:
             return None
 
         index = max(0, min(index, self._meta.frame_count - 1))
