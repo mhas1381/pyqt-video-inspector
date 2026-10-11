@@ -1,0 +1,21 @@
+[project]
+name = "pyqt-video-inspector"
+version = "0.1.0"
+description = "Simple video display and RGB histogram analysis with PyQt"
+readme = "README.md"
+authors = [
+    { name = "mhas1381", email = "mhas.software@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "PyQt6>=6.7",
+    "opencv-python>=4.10",
+    "numpy>=2.0",
+]
+
+[project.scripts]
+pyqt-video-inspector = "pyqt_video_inspector:main"
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13.0"]
+build-backend = "uv_build"
