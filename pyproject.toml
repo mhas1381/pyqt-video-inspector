@@ -14,8 +14,15 @@ dependencies = [
 ]
 
 [project.scripts]
-pyqt-video-inspector = "pyqt_video_inspector:main"
+pyqt-video-inspector = "main:main"
 
 [build-system]
-requires = ["uv_build>=0.12.21,<0.13.0"]
-build-backend = "uv_build"
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["main", "main_window", "frame_view", "histogram_window", "video_model"]
+
+[tool.pyright]
+extraPaths = ["src"]

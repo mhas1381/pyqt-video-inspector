@@ -17,9 +17,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pyqt_video_inspector.frame_view import FrameView
-from pyqt_video_inspector.histogram_window import HistogramWindow
-from pyqt_video_inspector.video_model import VideoModel
+from frame_view import FrameView
+from histogram_window import HistogramWindow
+from video_model import VideoModel
 
 
 class MainWindow(QMainWindow):
